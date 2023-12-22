@@ -1,43 +1,66 @@
 #!/bin/bash
 
-# Configure multiple monitors on Linux KDE kwin_wayland
+# monitor-config - Configure multiple monitors with kscreen-doctor
 #
-# This script uses kscreen-doctor to manage multiple monitors:
-# - List monitors
-# - Enable only left or right monitor 
-# - Disable specified monitors
+# This script allows saving and restoring multi-monitor layouts, disabling 
+# specific monitors, and focusing on only the left or right monitor. Monitor  
+# positions and priorities are persisted in a config file.
 #
-# It saves monitor positions and priorities to ~/.config/monitor_config.
-#
-# Usage:
-#   monitor-config [OPTIONS] [MONITORS_TO_DISABLE]
+# Usage: monitor-config [OPTIONS] [MONITOR]...
 #
 # Options:
-#   -l, --list               List monitors and exit
-#   -L, --left               Enable only leftmost monitor
-#   -R, --right              Enable only rightmost monitor 
+#   -h, --help             Print help and exit  
+#   -s, --save             Save current layout to config file
+#   -l, --list             List current monitors
+#   -L, --left             Enable only leftmost monitor
+#   -R, --right            Enable only rightmost monitor
 #
-# Arguments:
-#   MONITORS_TO_DISABLE      Space separated list of monitors to disable
-#
-# Example:
-#   monitor-config -L         # Enable only leftmost monitor
-#   monitor-config -R         # Enable only rightmost monitor
-#   monitor-config HDMI-1 DP-1 # Disable HDMI-1 and DP-1 monitors
+# The monitors passed as positional arguments will be disabled.
+# With no monitor arguments, the layout from the config file is applied.
 
 CONFIG_FILE=~/.config/monitor_config
+CONFIG_SAVED=false
 
 POSITIONAL_ARGS=()
 
+HELP=false
+SAVE=false
 LIST=false
 LEFT_ONLY=false
 RIGHT_ONLY=false
 
+print_help() {
+echo '''
+Configure monitors with kscreen-doctor. This script allows saving and restoring multi-monitor layouts, disabling 
+specific monitors, and enabling only the left or right monitor. Monitor  
+positions and priorities are persisted in a config file.
+ '''
+  echo "Usage: $(basename $0) [OPTIONS] [MONITOR]..."
+  echo ""  
+  echo "Options:"
+  echo "  -h, --help             Print this help"
+  echo "  -s, --save             Save current layout to config file"  
+  echo "  -l, --list             List current monitors"
+  echo "  -L, --left             Enable only leftmost monitor"
+  echo "  -R, --right            Enable only rightmost monitor"
+  echo ""
+  echo "The monitors passed as arguments will be disabled."
+  echo "With no arguments, the layout from the config file is applied."
+}
+
 while [[ $# -gt 0 ]]; do
     case $1 in
+    -h|--help)
+      HELP=true
+      shift
+      ;;    
+    -s|--save)
+        SAVE=true
+        shift
+        ;;    
     -l | --list)
         LIST=true
-        shift # past argument
+        shift
         ;;
     -L | --left)
         LEFT_ONLY=true
@@ -49,20 +72,39 @@ while [[ $# -gt 0 ]]; do
         ;;
     *)
 
-        POSITIONAL_ARGS+=("$1") # save positional arg
-        shift                   # past argument
+        POSITIONAL_ARGS+=("$1")
+        shift
         ;;
     esac
 done
 
-set -- "${POSITIONAL_ARGS[@]}" # restore positional parameters
+
+if $HELP; then
+  print_help
+  exit 0
+fi
 
 # List monitors
 if $LIST; then
     echo "Monitors:"
     kscreen-doctor -o | grep 'Output: ' | awk '{print $3}'
-    exit
+    exit 0
 fi
+
+set -- "${POSITIONAL_ARGS[@]}"
+
+if [ -f $CONFIG_FILE ] && grep -q "." $CONFIG_FILE ]; then
+  CONFIG_SAVED=true
+elif $SAVE; then 
+  touch $CONFIG_FILE
+  CONFIG_SAVED=true
+else
+    echo "Error: Monitor config has not been saved yet. Please run with --save first."
+    exit 1
+fi
+
+
+
 
 # Get monitor info
 INFO=$(kscreen-doctor -o)
@@ -79,6 +121,25 @@ while IFS= read -r LINE; do
     PRIORITY=$(echo "$LINE" | awk -F' ' '{for (i=1; i<=NF; i++) if ($i ~ /priority/) print $(i+1)}')
     PRIORITIES[$MONITOR_NAME]=$PRIORITY
 done < <(echo "$INFO" | grep 'Output:')
+
+
+if $SAVE; then
+    # Save current positions and priorities
+    for MONITOR in $(echo "$INFO" | grep 'Output: ' | awk '{print $3}'); do
+        POS=${POSITIONS[$MONITOR]}
+        PRIORITY=${PRIORITIES[$MONITOR]}
+        if grep -q "$MONITOR" $CONFIG_FILE; then
+            sed -i "/^$MONITOR/c$MONITOR $POS $PRIORITY" $CONFIG_FILE
+        else
+            echo "$MONITOR $POS $PRIORITY" >> $CONFIG_FILE 
+        fi
+    done
+
+    echo "Monitor configuration saved to $CONFIG_FILE:"
+    cat $CONFIG_FILE
+    CONFIG_SAVED=true
+    exit
+fi
 
 # Get left/right monitors
 if $LEFT_ONLY; then
@@ -115,12 +176,6 @@ for MONITOR in $(echo "$INFO" | grep 'Output: ' | awk '{print $3}'); do
     else
 
         if [[ " $DISABLE_MONITORS " =~ " $MONITOR " ]]; then
-            POS=${POSITIONS[$MONITOR]}
-            if grep -q "$MONITOR" $CONFIG_FILE; then
-                sed -i "/^$MONITOR/c$MONITOR $POS ${PRIORITIES[$MONITOR]}" $CONFIG_FILE || echo "Failed to save $MONITOR position" >&2
-            else
-                echo "$MONITOR $POS ${PRIORITIES[$MONITOR]}" >>$CONFIG_FILE
-            fi
             CMD="$CMD output.$MONITOR.disable"
         else
 
@@ -140,3 +195,4 @@ done
 # Execute command
 CMD="$(echo "$CMD" | sed 's/\x1b\[[0-9;]*[a-zA-Z]//g')" # Clean command
 $CMD
+exit 0
