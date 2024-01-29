@@ -103,15 +103,8 @@ else
     exit 1
 fi
 
-
-
-
 # Get monitor info
-INFO=$(kscreen-doctor -o)
-
-# Get disable list from argument
-DISABLE_MONITORS="$1"
-
+INFO=$(kscreen-doctor -o | tr -d '\n' | sed -e 's/Output:/\n&/g')
 # Populate config map
 declare -A POSITIONS PRIORITIES
 while IFS= read -r LINE; do
@@ -160,6 +153,9 @@ fi
 
 # Build command
 CMD="kscreen-doctor"
+
+# Get disable list from argument
+DISABLE_MONITORS="$1"
 
 for MONITOR in $(echo "$INFO" | grep 'Output: ' | awk '{print $3}'); do
 
